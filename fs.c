@@ -85,7 +85,7 @@ int mount_fs(char *disk_name) {
     char buffer[BLOCK_SIZE];
     memset(buffer, 0, BLOCK_SIZE);
 
-    if (block_read(0, buffer) != 0) return -1;
+    if (block_read(0, buffer) == -1) return -1;
 
     memcpy(&sb, buffer, sizeof(struct superblock));
     
@@ -96,7 +96,7 @@ int mount_fs(char *disk_name) {
     }
 
     for (size_t i = 0; i < sb.dir_blocks; i++) {
-        if (block_read(sb.dir_start + i, buffer) != 0) {
+        if (block_read(sb.dir_start + i, buffer) == -1) {
             free(directories);
             return -1;
         }
@@ -127,31 +127,49 @@ int mount_fs(char *disk_name) {
 }
 
 int umount_fs(char *disk_name) {     
-    char buffer[BLOCK_SIZE];
-    memset(buffer, 0, BLOCK_SIZE);
-    
-    if (fat != NULL) {
-        for (size_t i = 0; i < sb.fat_blocks; i++) {
-            memcpy(buffer, fat + (i * (BLOCK_SIZE / sizeof(int))), BLOCK_SIZE);
-            if (block_write(sb.fat_start + i, buffer) != 0) return -1;
-        }
-        
-        free(fat);
-        fat = NULL;
-    }
-
-    for (size_t i = 0; i < MAX_FD_COUNT; i++) {
-        fs_close(i);
-    }
-
     if (directories != NULL) {
-        for (size_t i = 0; i < sb.dir_blocks; i++) {
-            memcpy(buffer, (char*)directories + (i * BLOCK_SIZE), BLOCK_SIZE);   
-            if (block_write(sb.dir_start + i, buffer) != 0) return -1;
-        }
+        char block[BLOCK_SIZE];
 
+        for (size_t i = 0; i < sb.dir_blocks; i++) {
+            memset(block, 0, BLOCK_SIZE);
+            memcpy(block, (char*)directories + i * BLOCK_SIZE, BLOCK_SIZE);
+
+            if (block_write(sb.dir_start + i, block) == -1) {
+                return -1;
+            }
+        }
+    }
+
+    if (fat != NULL) {
+        char block[BLOCK_SIZE];
+        size_t ints_per_block = BLOCK_SIZE / sizeof(int);
+
+        for (size_t i = 0; i < sb.fat_blocks; i++) {
+            memset(block, 0, BLOCK_SIZE);
+            memcpy(block, (char*)fat + i * BLOCK_SIZE, BLOCK_SIZE);
+
+            if (block_write(sb.fat_start + i, block) == -1) {
+                return -1;
+            }
+        }
+    }
+
+    char block[BLOCK_SIZE];
+    memset(block, 0, BLOCK_SIZE);
+    memcpy(block, &sb, sizeof(sb));
+
+    if (block_write(0, block) == -1) {
+        return -1;
+    }
+
+    if (directories) {
         free(directories);
         directories = NULL;
+    }
+    
+    if (fat) {
+        free(fat);
+        fat = NULL;
     }
 
     if (close_disk() == -1) return -1;
