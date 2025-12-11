@@ -11,9 +11,6 @@
 #define MAX_FILE_COUNT 64
 #define MAX_FILE_NAME_LENGTH 64
 
-#define FAT_FREE -1
-#define FAT_EOC 0
-
 struct superblock {
     size_t dir_start; 
     size_t dir_blocks; 
@@ -241,10 +238,9 @@ int fs_delete(char *name) {
         if (dir->ref_count > 0) return -1;
 
         int curr_block = dir->head;
-        int next_block = fat[curr_block];
         
         while (curr_block != -1) {
-            next_block = fat[curr_block];
+            int next_block = fat[curr_block];
             fat[curr_block] = 0;
             curr_block = next_block;
         }
