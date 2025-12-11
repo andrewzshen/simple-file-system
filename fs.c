@@ -11,6 +11,9 @@
 #define MAX_FILE_COUNT 64
 #define MAX_FILE_NAME_LENGTH 64
 
+#define FAT_FREE -1
+#define FAT_EOC 0
+
 struct superblock {
     size_t dir_start; 
     size_t dir_blocks; 
@@ -37,14 +40,8 @@ struct file_desc {
 };
 
 static struct superblock sb;
-
 static int *fat;
-
-#define FAT_FREE -1
-#define FAT_EOC 0
-
 static struct directory *directories;
-
 static struct file_desc fd_table[MAX_FD_COUNT];
 
 /* File system API */
@@ -83,25 +80,10 @@ int mount_fs(char *disk_name) {
     if (block_read(0, buffer) != 0) return -1;
 
     memcpy(&sb, buffer, sizeof(struct superblock));
-
-    fat = (int*)malloc(sb.fat_blocks * BLOCK_SIZE);
-
-    if (fat == NULL) return -1;
     
-    for (size_t i = 0; i < sb.fat_blocks; i++) {
-        if (block_read(sb.fat_start + i, buffer) != 0) {
-            free(fat);
-            return -1;
-        }
-        
-        size_t fat_offset = i * (BLOCK_SIZE / sizeof(int));
-        memcpy(fat + fat_offset, buffer, BLOCK_SIZE);
-    }
-
     directories = (struct directory*)malloc(sb.dir_blocks * BLOCK_SIZE);
     
     if (directories == NULL) {
-        free(fat);
         return -1;
     }
 
@@ -113,6 +95,22 @@ int mount_fs(char *disk_name) {
         }
         
         memcpy((char*)directories + (i * BLOCK_SIZE), buffer, BLOCK_SIZE);
+    }
+
+    fat = (int*)malloc(sb.fat_blocks * BLOCK_SIZE);
+
+    if (fat == NULL) {
+        free(directories);
+        return -1;
+    }
+    
+    for (size_t i = 0; i < sb.fat_blocks; i++) {
+        if (block_read(sb.fat_start + i, buffer) != 0) {
+            free(fat);
+            return -1;
+        }
+        
+        memcpy(fat + (i * (BLOCK_SIZE / sizeof(int))), buffer, BLOCK_SIZE);
     }
 
     memset(fd_table, 0, sizeof(fd_table));
@@ -336,9 +334,9 @@ int fs_write(int fildes, void *buf, size_t nbyte) {
             int new_block = -1;
 
             for (int i = 0; i < sb.data_blocks; i++) {
-                if (fat[i] == 0) { // free block
+                if (fat[i] == FAT_FREE) {
                     new_block = i;
-                    fat[i] = -1; // mark as EOF temporarily
+                    fat[i] = FAT_EOC;
                     break;
                 }
             }
@@ -351,8 +349,7 @@ int fs_write(int fildes, void *buf, size_t nbyte) {
                 file->head = new_block;
             } else {
                 int last = file->head;
-                while (fat[last] != -1)
-                    last = fat[last];
+                while (fat[last] != -1) last = fat[last];
                 fat[last] = new_block;
             }
 
@@ -361,19 +358,19 @@ int fs_write(int fildes, void *buf, size_t nbyte) {
 
         char block_data[BLOCK_SIZE];
         
-        if (block_read(sb.data_start + curr_block, block_data) != 0)    
+        if (block_read(sb.data_start + curr_block, block_data) == -1) {
             memset(block_data, 0, BLOCK_SIZE);
+        }    
 
         size_t bytes_in_block = BLOCK_SIZE - offset_in_block;
-        if (bytes_in_block > remaining_bytes)
+
+        if (bytes_in_block > remaining_bytes) {
             bytes_in_block = remaining_bytes;
+        }
 
         memcpy(block_data + offset_in_block, (char *)buf + bytes_written, bytes_in_block);
 
-        if (block_write(sb.data_start + curr_block, block_data) != 0) {
-            fprintf(stderr, "fs_write: Failed to write block to disk.\n");
-            return -1;
-        }
+        if (block_write(sb.data_start + curr_block, block_data) == -1) return -1;
 
         bytes_written += bytes_in_block;
         remaining_bytes -= bytes_in_block;
@@ -399,7 +396,7 @@ int fs_write(int fildes, void *buf, size_t nbyte) {
 
 int fs_get_filesize(int fildes) {
     if (fildes < 0 || fildes >= MAX_FD_COUNT) return -1;
-    if (fd_table[fildes].used) return -1;
+    if (!fd_table[fildes].used) return -1;
     
     struct file_desc *fd = &fd_table[fildes];
     struct directory *file = &directories[fd->file];
@@ -409,7 +406,7 @@ int fs_get_filesize(int fildes) {
 
 int fs_lseek(int fildes, off_t offset) {
     if (fildes < 0 || fildes >= MAX_FD_COUNT) return -1;
-    if (fd_table[fildes].used) return -1;
+    if (!fd_table[fildes].used) return -1;
     
     struct file_desc *fd = &fd_table[fildes];
     struct directory *file = &directories[fd->file];
@@ -423,7 +420,7 @@ int fs_lseek(int fildes, off_t offset) {
 
 int fs_truncate(int fildes, off_t length) {
     if (fildes < 0 || fildes >= MAX_FD_COUNT) return -1;
-    if (fd_table[fildes].used) return -1;
+    if (!fd_table[fildes].used) return -1;
     
     struct file_desc *fd = &fd_table[fildes];
     struct directory *file = &directories[fd->file];
