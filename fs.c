@@ -65,11 +65,11 @@ int make_fs(char *disk_name) {
 
     memset(buffer, 0, BLOCK_SIZE);
 
-    for (size_t i = 0; i < sb.dir_start + sb.dir_blocks; i++) {
+    for (size_t i = temp.dir_start; i < temp.dir_start + temp.dir_blocks; i++) {
         if(block_write(i, buffer) == -1) return -1;
     }
 
-    for (size_t i = 0; i < sb.fat_start + sb.fat_blocks; i++) {
+    for (size_t i = temp.fat_start; i < temp.fat_start + temp.fat_blocks; i++) {
         if(block_write(i, buffer) == -1) return -1;
     }
     
@@ -239,7 +239,7 @@ int fs_create(char *name) {
     directories[free_index].size = 0;
     directories[free_index].head = -1;
     directories[free_index].ref_count = 0;
-    memcpy(directories[free_index].name, name, strlen(name));
+    strcpy(directories[free_index].name, name);
     
     return 0;
 }
@@ -268,7 +268,7 @@ int fs_delete(char *name) {
         dir->size = 0;
         dir->head = -1;
         dir->ref_count = 0;
-        memset(dir->name, 0, strlen(name));
+        memset(dir->name, 0, MAX_FILE_NAME_LENGTH);
 
         return 0;
     }
