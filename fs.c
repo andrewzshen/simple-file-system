@@ -253,7 +253,7 @@ int fs_delete(char *name) {
         dir->size = 0;
         dir->head = -1;
         dir->ref_count = 0;
-        memset(dir->name, 0, strlen(name));
+        memset(dir->name, 0, MAX_FILE_NAME_LENGTH);
 
         return 0;
     }
@@ -270,10 +270,10 @@ int fs_read(int fildes, void *buf, size_t nbyte) {
 
     if (fd->offset >= file->size) return 0;
 
-    size_t totalbytes = nbyte;
+    size_t total_bytes = nbyte;
     
     if (fd->offset + nbyte > file->size) {
-        totalbytes = file->size - fd->offset;
+        total_bytes = file->size - fd->offset;
     }
 
     int curr_block = file->head;
@@ -287,18 +287,19 @@ int fs_read(int fildes, void *buf, size_t nbyte) {
 
     size_t bytes_read = 0;
 
-    while (totalbytes > 0 && curr_block != -1) {
+    while (total_bytes > 0 && curr_block != -1) {
         char block_data[BLOCK_SIZE];
+        
         if (block_read(sb.data_start + curr_block, block_data) == -1) return -1;
         
         size_t bytes_from_block = BLOCK_SIZE - offset_in_block;
         
-        if (bytes_from_block > totalbytes) {
-            bytes_from_block = totalbytes;
+        if (bytes_from_block > total_bytes) {
+            bytes_from_block = total_bytes;
         }
 
         memcpy((char*)buf + bytes_read, block_data + offset_in_block, bytes_from_block);
-        totalbytes -= bytes_from_block;
+        total_bytes -= bytes_from_block;
         bytes_read += bytes_from_block;
         offset_in_block = 0;
 
@@ -334,9 +335,9 @@ int fs_write(int fildes, void *buf, size_t nbyte) {
             int new_block = -1;
 
             for (int i = 0; i < sb.data_blocks; i++) {
-                if (fat[i] == FAT_FREE) {
+                if (fat[i] == 0) {
                     new_block = i;
-                    fat[i] = FAT_EOC;
+                    fat[i] = -1;
                     break;
                 }
             }
