@@ -62,6 +62,17 @@ int make_fs(char *disk_name) {
     memcpy(buffer, &temp, sizeof(struct superblock));
 
     if (block_write(0, buffer) == -1) return -1;
+
+    memset(buffer, 0, BLOCK_SIZE);
+
+    for (size_t i = 0; i < sb.dir_start + sb.dir_blocks; i++) {
+        if(block_write(i, buffer) == -1) return -1;
+    }
+
+    for (size_t i = 0; i < sb.fat_start + sb.fat_blocks; i++) {
+        if(block_write(i, buffer) == -1) return -1;
+    }
+    
     if (close_disk() == -1) return -1;
     
     return 0;
@@ -86,7 +97,6 @@ int mount_fs(char *disk_name) {
 
     for (size_t i = 0; i < sb.dir_blocks; i++) {
         if (block_read(sb.dir_start + i, buffer) != 0) {
-            free(fat);
             free(directories);
             return -1;
         }
@@ -104,6 +114,7 @@ int mount_fs(char *disk_name) {
     for (size_t i = 0; i < sb.fat_blocks; i++) {
         if (block_read(sb.fat_start + i, buffer) != 0) {
             free(fat);
+            free(directories);
             return -1;
         }
         
@@ -115,7 +126,7 @@ int mount_fs(char *disk_name) {
     return 0;
 }
 
-int umount_fs(char *disk_name) {
+int umount_fs(char *disk_name) {     
     char buffer[BLOCK_SIZE];
     memset(buffer, 0, BLOCK_SIZE);
     
@@ -129,6 +140,10 @@ int umount_fs(char *disk_name) {
         fat = NULL;
     }
 
+    for (size_t i = 0; i < MAX_FD_COUNT; i++) {
+        fs_close(i);
+    }
+
     if (directories != NULL) {
         for (size_t i = 0; i < sb.dir_blocks; i++) {
             memcpy(buffer, (char*)directories + (i * BLOCK_SIZE), BLOCK_SIZE);   
@@ -137,10 +152,6 @@ int umount_fs(char *disk_name) {
 
         free(directories);
         directories = NULL;
-    }
-
-    for (size_t i = 0; i < MAX_FD_COUNT; i++) {
-        fs_close(i);
     }
 
     if (close_disk() == -1) return -1;
@@ -183,18 +194,25 @@ int fs_open(char *name) {
 }
 
 int fs_close(int fildes) {
-    if (fildes < 0 || fildes >= MAX_FD_COUNT) return -1; 
+    if (fildes < 0 || fildes >= MAX_FD_COUNT) return -1;
     if (!fd_table[fildes].used) return -1;
 
     int file_index = fd_table[fildes].file;
 
-    if (directories[file_index].used) {
-        directories[file_index].ref_count--;
+    if (file_index < 0 || file_index >= MAX_FILE_COUNT) {
+        fd_table[fildes].used = 0;
+        fd_table[fildes].file = -1;
+        fd_table[fildes].offset = 0;
+        return -1;
     }
 
     fd_table[fildes].used = 0;
     fd_table[fildes].file = -1;
     fd_table[fildes].offset = 0;
+
+    if (directories[file_index].used) {
+        directories[file_index].ref_count--;
+    }
 
     return 0;
 }
@@ -238,9 +256,10 @@ int fs_delete(char *name) {
         if (dir->ref_count > 0) return -1;
 
         int curr_block = dir->head;
+        int next_block = fat[curr_block];
         
         while (curr_block != -1) {
-            int next_block = fat[curr_block];
+            next_block = fat[curr_block];
             fat[curr_block] = 0;
             curr_block = next_block;
         }
@@ -249,7 +268,7 @@ int fs_delete(char *name) {
         dir->size = 0;
         dir->head = -1;
         dir->ref_count = 0;
-        memset(dir->name, 0, MAX_FILE_NAME_LENGTH);
+        memset(dir->name, 0, strlen(name));
 
         return 0;
     }
